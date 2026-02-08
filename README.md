@@ -1,4 +1,8 @@
-# <img src="icon.png" width="40" height="40" align="center"> Gemini to Note (Notion & Obsidian Integrated)
+<p align="center">
+  <img src="icon.png" width="200" height="200">
+</p>
+
+# Gemini to Note (Notion & Obsidian Integrated)
 
 A Tampermonkey userscript that allows you to easily send Gemini (Google AI) responses directly to Notion or Obsidian with full support for tables, math formulas (LaTeX), and Markdown formatting.
 
