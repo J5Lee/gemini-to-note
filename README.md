@@ -3,8 +3,11 @@
 </p>
 
 # Gemini to Note (Notion & Obsidian Integrated)
-
 A Tampermonkey userscript that allows you to easily send Gemini (Google AI) responses directly to Notion or Obsidian with full support for tables, math formulas (LaTeX), and Markdown formatting.
+
+### Motivation
+
+Have you ever found yourself constantly copying and pasting responses from Gemini (Google AI) into your personal notes, only to be frustrated by the tedious process and broken formatting? This script was born out of that very frustration. Manually transferring information from the web to Notion or Obsidian, especially when dealing with rich content like tables or code blocks, is not only time-consuming but often results in a loss of valuable formatting. This project aims to streamline that workflow, ensuring your AI-generated insights are seamlessly integrated into your knowledge base.
 
 ## Features
 
