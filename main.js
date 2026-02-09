@@ -3,7 +3,7 @@
 // @namespace     http://tampermonkey.net/
 // @version       4.0
 // @description   Integrated transfer to Notion and Obsidian, perfect support for tables and formulas
-// @author        Gemini Partner
+// @author        junseok lee with gemini
 // @match         https://gemini.google.com/*
 // @grant         GM_xmlhttpRequest
 // @connect       YOUR_NOTION_URL
@@ -18,11 +18,11 @@
 
     // API Settings
     const NOTION_CONF = {
-        URL: "YOUR_NOTION_URL",
+        URL: "YOUR_NOTION_URL/notion",
         KEY: "YOUR_NOTION_KEY"
     };
     const OBSIDIAN_CONF = {
-        URL: "YOUR_OBSIDIAN_URL",
+        URL: "YOUR_OBSIDIAN_URL/vault/inbox",
         KEY: "YOUR_OBSIDIAN_KEY"
     };
 
