@@ -39,6 +39,41 @@ const OBSIDIAN_CONF = {
 };
 ```
 
+### Notion Server Setup
+
+> [!IMPORTANT]
+> To use the **Send to Notion** feature, you must run the included `server.py` Flask server. This server acts as a proxy between the Tampermonkey script and the Notion API, handling markdown-to-Notion block conversion.
+
+#### 1. Install Dependencies
+
+```bash
+pip install flask flask-cors notion-client
+```
+
+#### 2. Configure `server.py`
+
+Open `server.py` and replace the following placeholder values with your own:
+
+| Variable | Description | How to Obtain |
+|---|---|---|
+| `NOTION_TOKEN` | Notion Internal Integration Token | [My Integrations](https://www.notion.so/my-integrations) |
+| `PARENT_PAGE_ID` | ID of the parent page for new notes | Copy from the Notion page URL |
+| `API_KEY` | Key to authenticate requests from the script | Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` or set via `NOTION_API_KEY` env variable |
+
+> [!NOTE]
+> Make sure your Notion integration has access to the parent page. Go to the page in Notion → **⋯ (More)** → **Connections** → Add your integration.
+
+#### 3. Run the Server
+
+```bash
+python server.py
+```
+
+The server runs on `http://0.0.0.0:5000` by default.
+#### 4. Update `main.js`
+
+Set `NOTION_CONF.URL` to your server's `/notion` endpoint and `NOTION_CONF.KEY` to the `API_KEY` you configured in `server.py`.
+
 ### Important Note on Chrome & HTTPS
 
 > [!WARNING]
