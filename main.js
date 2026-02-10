@@ -1,128 +1,173 @@
 // ==UserScript==
-// @name          Gemini to Note (Notion & Obsidian Integrated)
-// @namespace     http://tampermonkey.net/
-// @version       4.0
-// @description   Integrated transfer to Notion and Obsidian, perfect support for tables and formulas
-// @author        junseok lee with gemini
-// @match         https://gemini.google.com/*
-// @grant         GM_xmlhttpRequest
-// @connect       YOUR_NOTION_URL
-// @connect       YOUR_OBSIDIAN_URL
-// @require       https://unpkg.com/turndown/dist/turndown.js
-// @require       https://unpkg.com/turndown-plugin-gfm/dist/turndown-plugin-gfm.js
-// @run-at        document-idle
+// @name         Gemini to Note (Notion & Obsidian Integrated)
+// @namespace    http://tampermonkey.net/
+// @version      7.1
+// @description  V7.1: Multi-layer bold handling (DOM rule + delimiter fallback + regex catch-all)
+// @author       Junseok Lee
+// @match        https://gemini.google.com/*
+// @grant        GM_xmlhttpRequest
+// @connect      YOUR_NOTION_DOMAIN
+// @connect      YOUR_OBSIDIAN_DOMAIN
+// @require      https://unpkg.com/turndown/dist/turndown.js
+// @require      https://unpkg.com/turndown-plugin-gfm/dist/turndown-plugin-gfm.js
+// @run-at       document-idle
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    // API Settings
-    const NOTION_CONF = {
-        URL: "YOUR_NOTION_URL/notion",
-        KEY: "YOUR_NOTION_KEY"
-    };
-    const OBSIDIAN_CONF = {
-        URL: "YOUR_OBSIDIAN_URL/vault/inbox",
-        KEY: "YOUR_OBSIDIAN_KEY"
-    };
+    const NOTION_CONF = { URL: "YOUR_NOTION_API_URL", KEY: "YOUR_NOTION_API_KEY" };
+    const OBSIDIAN_CONF = { URL: "YOUR_OBSIDIAN_API_URL", KEY: "YOUR_OBSIDIAN_API_KEY" };
 
-    // Trusted Types Policy Setup
-    if (window.trustedTypes && window.trustedTypes.createPolicy) {
-        try {
-            if (!window.trustedTypes.defaultPolicy) {
-                window.trustedTypes.createPolicy('default', {
-                    createHTML: (s) => s,
-                    createScript: (s) => s,
-                    createScriptURL: (s) => s
-                });
-            }
-        } catch (e) { }
+    /**
+     * Advanced Post-processing for Obsidian
+     */
+    function postProcessForObsidian(md) {
+        // 1. Unescape backslashes before markdown symbols
+        md = md.replace(/\\([$_\*#])/g, '$1');
+
+        // 2. [WHITESPACE LINE CLEANUP] Convert lines with only spaces/tabs to empty lines
+        //    Prevents whitespace-only lines from bypassing newline compression
+        md = md.replace(/\n[ \t]+\n/g, '\n\n');
+
+        // 3. [NEWLINE COMPRESSION] Normalize excessive newlines (3+ → 2)
+        //    MUST happen BEFORE horizontal rule fix so it doesn't undo the fix
+        md = md.replace(/\n{3,}/g, '\n\n');
+
+        // 3.5. [BLOCK MATH SPACING] Remove blank lines around block math $$
+        //      Obsidian renders $$ correctly without surrounding blank lines
+        md = md.replace(/\n\n(\$\$\n)/g, '\n$1');   // blank line before opening $$
+        md = md.replace(/(\n\$\$)\n\n/g, '$1\n');   // blank line after closing $$
+
+        // 4. [LIST SPACING FIX] Remove blank lines between consecutive list items
+        //    Numbered lists: 1. item\n\n2. item → 1. item\n2. item
+        //    Bulleted lists: - item\n\n- item → - item\n- item
+        md = md.replace(/^(\d+\..+)\n\n(?=\d+\.)/gm, '$1\n');
+        md = md.replace(/^(-.+)\n\n(?=-\s)/gm, '$1\n');
+
+        // 5. [HORIZONTAL RULE FIX] Force blank lines around standalone ---
+        //    Prevents --- from being interpreted as a Setext H2 heading
+        //    Only targets lines that are exactly --- (not inside frontmatter or code)
+        md = md.replace(/^(.*\S.*)(\n)(---)\s*$/gm, '$1\n\n$3');  // text\n--- → text\n\n---
+        md = md.replace(/^(---)\s*\n(\S)/gm, '$1\n$2');           // ---\ntext → ---\ntext
+
+        // 5.5. [MATH-HR GUARD] Ensure blank line between closing $$ and ---
+        //      Without this, reducing math newlines would cause $$ \n --- → Setext heading
+        md = md.replace(/^(\$\$)\s*\n(---)/gm, '$1\n\n$2');
+
+        // 6. [BOLD FALLBACK] Convert any remaining ** to __
+        //    Primary handling is by Turndown obsidianBold custom rule (DOM-based).
+        //    This catches: literal ** in HTML text, or <strong> elements the custom rule missed.
+        md = md.replace(/\*\*/g, '__');
+
+        // 7. [BOLD SPACING FALLBACK] Ensure closing __ has space before special chars
+        //    Only needed for ** → __ fallback cases; DOM-based cases already have proper spacing.
+        //    e.g., word__) → word__ ), word__$ → word__ $
+        md = md.replace(/(\S)__([^\s\w])/g, '$1__ $2');
+
+        // 8. Cleanup: Consolidate multiple spaces (but not newlines)
+        md = md.replace(/ {2,}/g, ' ');
+
+        const now = new Date().toISOString();
+        return `---\ndate: ${now}\nsource: Gemini\n---\n\n${md}`;
     }
 
-    // Initialize Turndown service and set rules
-    let turndownService = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', hr: '---' });
-    if (typeof turndownPluginGfm !== 'undefined') turndownService.use(turndownPluginGfm.gfm);
+    function getConfiguredMarkdown(block, target) {
+        const isObsidian = target === 'Obsidian';
+        const ts = new TurndownService({
+            headingStyle: 'atx',
+            codeBlockStyle: 'fenced',
+            hr: '---',
+            bulletListMarker: '-',
+            strongDelimiter: isObsidian ? '__' : '**'
+        });
 
-    turndownService.escape = (s) => s;
+        if (typeof turndownPluginGfm !== 'undefined') ts.use(turndownPluginGfm.gfm);
+        ts.escape = (s) => s;
 
-    // Apply math and formatting rules
-    turndownService.addRule('blockMath', {
-        filter: (n) => n.nodeName === 'DIV' && n.classList.contains('math-block'),
-        replacement: (c, n) => `\n\n$$\n${n.getAttribute('data-math')}\n$$\n\n`
-    });
-    turndownService.addRule('inlineMath', {
-        filter: (n) => n.nodeName === 'SPAN' && n.classList.contains('math-inline'),
-        replacement: (c, n) => `$${n.getAttribute('data-math')}$`
-    });
-    turndownService.addRule('heading4', { filter: 'h4', replacement: (c) => `\n\n### ${c}\n\n` });
-    turndownService.addRule('horizontalRule', { filter: 'hr', replacement: () => '\n\n---\n\n' });
+        ts.addRule('math', {
+            filter: (n) => n.classList.contains('math-block') || n.classList.contains('math-inline') || n.tagName === 'MATHEMATICS',
+            replacement: (c, n) => {
+                const math = n.getAttribute('data-math') || n.textContent;
+                const isBlock = n.classList.contains('math-block') || n.tagName === 'DIV';
+                return isBlock ? `\n$$\n${math.trim()}\n$$\n` : `$${math.trim()}$`;
+            }
+        });
+
+        // For Obsidian: handle bold (__) with DOM context instead of fragile regex post-processing
+        // Inspects sibling nodes to determine if spacing is needed around __ delimiters
+        if (isObsidian) {
+            ts.addRule('obsidianBold', {
+                filter: ['strong', 'b'],
+                replacement: (content, node) => {
+                    if (!content.trim()) return content;
+                    const trimmed = content.trim();
+                    let prefix = '';
+                    let suffix = '';
+                    const prev = node.previousSibling;
+                    const next = node.nextSibling;
+                    // Space before opening __ if preceded by letter/digit (incl. CJK/Korean)
+                    // e.g., 한국어<strong>bold</strong> → 한국어 __bold__
+                    if (prev) {
+                        const t = prev.textContent || '';
+                        if (/[\p{L}\p{N}]$/u.test(t)) prefix = ' ';
+                    }
+                    // Space after closing __ if followed by punctuation/special char
+                    // e.g., <strong>bold</strong>) → __bold__ )
+                    if (next) {
+                        const t = next.textContent || '';
+                        if (/^[^\s\w]/.test(t)) suffix = ' ';
+                    }
+                    return `${prefix}__${trimmed}__${suffix}`;
+                }
+            });
+        }
+
+        const clone = block.cloneNode(true);
+        const btns = clone.querySelector('.kb-btn-wrapper');
+        if (btns) btns.remove();
+
+        let md = ts.turndown(clone);
+        if (isObsidian) md = postProcessForObsidian(md);
+
+        return md;
+    }
 
     function injectButtons() {
-        const responseBlocks = document.querySelectorAll('message-content');
-
-        responseBlocks.forEach(block => {
+        const blocks = document.querySelectorAll('message-content');
+        blocks.forEach(block => {
             if (block.querySelector('.kb-btn-wrapper')) return;
-
-            // Create button container (Flexbox horizontal alignment)
             const wrapper = document.createElement('div');
             wrapper.className = 'kb-btn-wrapper';
-            wrapper.style = 'display: flex; gap: 8px; margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee; align-items: center;';
-
-            // Common button creation function
-            const createBtn = (text, bgColor, className) => {
-                const btn = document.createElement('button');
-                btn.innerText = text;
-                btn.className = className;
-                btn.style = `padding: 6px 14px; cursor: pointer; background: ${bgColor}; color: #fff; border: none; border-radius: 6px; font-weight: bold; font-size: 11px; transition: opacity 0.2s;`;
-                btn.onmouseover = () => btn.style.opacity = '0.8';
-                btn.onmouseout = () => btn.style.opacity = '1';
-                return btn;
-            };
-
-            const nBtn = createBtn('Send to Notion', '#000', 'send-to-notion-btn');
-            const oBtn = createBtn('Send to Obsidian', '#483699', 'send-to-obsidian-btn');
-
-            nBtn.onclick = (e) => handleTransfer(e, block, 'Notion', wrapper);
-            oBtn.onclick = (e) => handleTransfer(e, block, 'Obsidian', wrapper);
-
-            wrapper.appendChild(nBtn);
-            wrapper.appendChild(oBtn);
-            block.appendChild(wrapper);
+            wrapper.style = 'display: flex; gap: 8px; margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee;';
+            const nBtn = createBtn('Send to Notion', '#000');
+            const oBtn = createBtn('Send to Obsidian', '#483699');
+            nBtn.onclick = () => handleTransfer(block, 'Notion');
+            oBtn.onclick = () => handleTransfer(block, 'Obsidian');
+            wrapper.append(nBtn, oBtn);
+            block.append(wrapper);
         });
     }
 
-    function handleTransfer(e, block, target, wrapper) {
-        e.preventDefault();
-        const title = window.prompt(`Enter ${target} title:`, "Gemini Response");
+    function createBtn(txt, bg) {
+        const b = document.createElement('button');
+        b.innerText = txt;
+        b.style = `padding: 6px 14px; cursor: pointer; background: ${bg}; color: #fff; border: none; border-radius: 6px; font-weight: bold; font-size: 11px;`;
+        return b;
+    }
+
+    function handleTransfer(block, target) {
+        const title = window.prompt(`Title for ${target}:`, "Gemini Response");
         if (!title) return;
-
-        try {
-            wrapper.style.display = 'none';
-            const markdown = turndownService.turndown(block);
-            wrapper.style.display = 'flex';
-
-            const isObs = target === 'Obsidian';
-            const fileName = encodeURIComponent(title.replace(/[\\/:*?"<>|]/g, "")) + ".md";
-
-            GM_xmlhttpRequest({
-                method: isObs ? "PUT" : "POST",
-                url: isObs ? `${OBSIDIAN_CONF.URL}/${fileName}` : NOTION_CONF.URL,
-                data: isObs ? markdown : JSON.stringify({ title, content: markdown }),
-                headers: {
-                    "Content-Type": isObs ? "text/markdown" : "application/json",
-                    "Accept": "application/json",
-                    [isObs ? "Authorization" : "X-API-Key"]: isObs ? `Bearer ${OBSIDIAN_CONF.KEY}` : NOTION_CONF.KEY
-                },
-                onload: (res) => {
-                    if (res.status === 200 || res.status === 204) alert(`✅ ${target} Transfer Complete!`);
-                    else alert(`❌ Transfer Failed (${res.status})\n`);
-                },
-                onerror: () => alert(`⚠️ ${target} Network Error occurred`)
-            });
-        } catch (err) {
-            alert('An error occurred during conversion');
-            console.error(err);
-        }
+        const md = getConfiguredMarkdown(block, target);
+        const isObs = target === 'Obsidian';
+        GM_xmlhttpRequest({
+            method: isObs ? "PUT" : "POST",
+            url: isObs ? `${OBSIDIAN_CONF.URL}/${encodeURIComponent(title)}.md` : NOTION_CONF.URL,
+            data: isObs ? md : JSON.stringify({ title, content: md }),
+            headers: { "Content-Type": isObs ? "text/markdown; charset=utf-8" : "application/json", [isObs ? "Authorization" : "X-API-Key"]: isObs ? `Bearer ${OBSIDIAN_CONF.KEY}` : NOTION_CONF.KEY },
+            onload: (res) => alert(res.status < 300 ? `✅ Sent to ${target}` : `❌ Error: ${res.status}`)
+        });
     }
 
     setInterval(injectButtons, 2000);

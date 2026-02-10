@@ -16,11 +16,6 @@ Have you ever found yourself constantly copying and pasting responses from Gemin
 - **Math Support**: Full support for inline and block math formulas using LaTeX.
 - **Customizable**: Set your own API endpoints and keys for Notion and Obsidian integrations.
 
-## Integration Status
-
-- **Notion**: ✅ Stable formatting and transfer.
-- **Obsidian**: 🛠️ Still under development (formatting may vary).
-
 ## Installation
 
 1. Install the **Tampermonkey** extension for your browser (Chrome, Firefox, Edge, etc.).
@@ -59,6 +54,10 @@ const OBSIDIAN_CONF = {
 4. Click the desired button.
 5. Enter a title for the note when prompted.
 6. A success message will appear once the transfer is complete.
+
+## Roadmap
+
+- [ ] Migrate to a standalone **Chrome Extension** (no Tampermonkey dependency)
 
 ---
 
