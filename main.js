@@ -34,6 +34,10 @@
         //    MUST happen BEFORE horizontal rule fix so it doesn't undo the fix
         md = md.replace(/\n{3,}/g, '\n\n');
 
+        // 3.2. [HEADER SPACING FIX] Reduce newlines AFTER headers (2 -> 1)
+        //      User preference: reduce excessive newlines after headers (e.g. # Title\n\nText -> # Title\nText)
+        md = md.replace(/^(#+ .*)\n\n/gm, '$1\n');
+
         // 3.5. [BLOCK MATH SPACING] Remove blank lines around block math $$
         //      Obsidian renders $$ correctly without surrounding blank lines
         md = md.replace(/\n\n(\$\$\n)/g, '\n$1');   // blank line before opening $$
