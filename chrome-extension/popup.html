@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <style>
+    body {
+      width: 320px;
+      padding: 10px;
+      font-family: sans-serif;
+    }
+
+    h2 {
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    label {
+      display: block;
+      margin-top: 10px;
+      font-size: 12px;
+      font-weight: bold;
+    }
+
+    input,
+    select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 5px;
+      margin-top: 5px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+
+    button {
+      width: 100%;
+      margin-top: 15px;
+      padding: 8px;
+      background-color: #4285f4;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    button:hover {
+      background-color: #357ae8;
+    }
+
+    #status {
+      margin-top: 10px;
+      font-size: 12px;
+      height: 14px;
+      color: green;
+      text-align: center;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>AIChat-to-Notes Settings</h2>
+
+  <label for="notionKey">Notion Integration Token</label>
+  <input type="password" id="notionKey" placeholder="secret_...">
+
+  <label for="notionParentId">Notion Parent ID (Page or Database)</label>
+  <input type="text" id="notionParentId" placeholder="32-char ID (with or without hyphens)">
+
+  <label for="notionParentType">Notion Parent Type</label>
+  <select id="notionParentType">
+    <option value="auto">Auto Detect (Recommended)</option>
+    <option value="page">Page</option>
+    <option value="database">Database</option>
+  </select>
+
+  <label for="obsidianUrl">Obsidian Local REST API URL</label>
+  <input type="text" id="obsidianUrl" placeholder="http://127.0.0.1:27123/vault/...">
+
+  <label for="obsidianKey">Obsidian API Key</label>
+  <input type="password" id="obsidianKey" placeholder="Authorization Token">
+
+  <button id="save">Save Settings</button>
+  <div id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+
+</html>
