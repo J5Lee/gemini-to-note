@@ -22,6 +22,7 @@
         "https://chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
+      "all_frames": true,
       "js": ["libs/turndown.js", "libs/turndown-plugin-gfm.js", "content.js"]
     }
   ],

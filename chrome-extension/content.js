@@ -3,8 +3,10 @@
 
     const host = window.location.hostname;
     const isChatGptHost = host.includes('chatgpt.com') || host.includes('openai.com');
-    const isNotebookLmHost = host.includes('notebooklm.google.com');
+    const isGeminiHost = host.includes('gemini.google.com');
+    const isNotebookLmHost = host.includes('notebooklm.google.com') || host.includes('notebooklm.googleusercontent.com');
     const platformName = isNotebookLmHost ? 'NotebookLM' : (isChatGptHost ? 'ChatGPT' : 'Gemini');
+    if (!shouldRunInFrame()) return;
 
     // Helper: Get config from storage
     async function getConfig() {
@@ -63,28 +65,12 @@
     }
 
     function getMessageBlocks() {
-        if (host.includes('gemini.google.com')) {
+        if (isGeminiHost) {
             return Array.from(document.querySelectorAll('message-content'));
         }
 
         if (isNotebookLmHost) {
-            const selectors = [
-                'main [data-testid*="response"]',
-                'main [class*="response"]',
-                'main [class*="answer"]',
-                'main article'
-            ];
-
-            const blockSet = new Set();
-            selectors.forEach((selector) => {
-                document.querySelectorAll(selector).forEach((el) => blockSet.add(el));
-            });
-
-            const candidates = Array.from(blockSet).filter((node) => {
-                const textLength = (node.innerText || '').trim().length;
-                return textLength > 80;
-            });
-            return candidates.filter((node) => !candidates.some((other) => other !== node && node.contains(other)));
+            return getNotebookLmMessageBlocks();
         }
 
         const selectors = [
@@ -100,6 +86,190 @@
 
         const candidates = Array.from(blockSet);
         return candidates.filter((node) => !candidates.some((other) => other !== node && node.contains(other)));
+    }
+
+    function getNotebookLmMessageBlocks() {
+        const root = document.body;
+        const blockSet = new Set();
+        const selectors = [
+            '[data-testid*="response"]',
+            '[data-testid*="response-item"]',
+            '[data-testid*="turn"]',
+            '[data-testid*="message"]',
+            '[data-message-author-role]',
+            '[data-message-id]',
+            '[role="article"]',
+            '[role="article"][aria-roledescription]',
+            '[role="region"]',
+            '[role="group"]',
+            '[role="listitem"]',
+            '[role="status"]',
+            '[aria-live="polite"]',
+            '[aria-label*="assistant"]',
+            '[aria-label*="response"]',
+            '[aria-label*="assistant response"]',
+            '[id*="response"]',
+            '[id*="message"]',
+            '[class*="response"]',
+            '[class*="answer"]',
+            '[class*="message"]',
+            '[class*="bubble"]',
+            '[class*="prompt"]',
+            '[class*="turn"]',
+            '[class*="assistant"]',
+            '[class*="content"]',
+            '[class*="markdown"]',
+            '[class*="prose"]',
+            'main article',
+            'main section',
+            '.chat-turn',
+            '.chat-message',
+            '.response',
+            '.assistant'
+        ];
+
+        selectors.forEach((selector) => {
+            root.querySelectorAll(selector).forEach((el) => {
+                if (isNotebookLmMessageCandidate(el, getNotebookLmMessageScore(el))) {
+                    blockSet.add(el);
+                }
+            });
+        });
+
+        if (blockSet.size === 0) {
+            root.querySelectorAll('article, section, div').forEach((el) => {
+                if (isNotebookLmMessageCandidate(el, getNotebookLmMessageScore(el), true) && getNodeTextLength(el) > 140) {
+                    blockSet.add(el);
+                }
+            });
+        }
+
+        if (blockSet.size > 0 && blockSet.size < 3) {
+            root.querySelectorAll('div, section, article').forEach((el) => {
+                if (isNotebookLmMessageCandidate(el, getNotebookLmMessageScore(el), true) && getNodeTextLength(el) > 220) {
+                    blockSet.add(el);
+                }
+            });
+        }
+
+        if (blockSet.size === 0) {
+            root.querySelectorAll('main [class], #content [class]').forEach((el) => {
+                if (isNotebookLmMessageCandidate(el, getNotebookLmMessageScore(el), true)) {
+                    blockSet.add(el);
+                }
+            });
+        }
+
+        const candidates = Array.from(blockSet);
+        const topCandidates = candidates
+            .filter((node) => getNodeTextLength(node) >= 80)
+            .filter((node, idx, arr) => !arr.some((other, otherIdx) => otherIdx !== idx && other.contains(node)))
+            .map((node) => ({ node, score: getNotebookLmMessageScore(node) }))
+            .filter(({ node, score }) => score >= (hasNotebookLmMessageHint(node) ? 42 : 72))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 24)
+            .map(({ node }) => node);
+
+        if (topCandidates.length === 0) {
+            const broadNodes = Array.from(root.querySelectorAll('div, article, section, main div, main article'))
+                .filter((node) => node instanceof Element)
+                .filter((node) => isNotebookLmMessageCandidate(node, getNotebookLmMessageScore(node), true))
+                .filter((node) => !node.closest('nav, header, aside, footer, form'));
+
+            const deduped = broadNodes.filter((node, idx, arr) => !arr.some((other, otherIdx) => otherIdx !== idx && other.contains(node)));
+            const finalFallback = deduped
+                .sort((a, b) => getNotebookLmMessageScore(b) - getNotebookLmMessageScore(a))
+                .slice(0, 12);
+
+            if (finalFallback.length > 0) {
+                return finalFallback;
+            }
+
+            if (window.__aichatToNotesDebug !== false) {
+                const selectorCount = new Set(blockSet).size;
+                console.warn('[AIChat-to-Notes] No NotebookLM candidates found. Check DOM structure.',
+                    { selectorBased: selectorCount, fallbackTried: true });
+            }
+        }
+
+        return topCandidates;
+    }
+
+    function getNotebookLmMessageScore(node) {
+        if (!node) return 0;
+        const textLength = getNodeTextLength(node);
+        const className = (node.className || '').toString().toLowerCase();
+        const testId = (node.getAttribute('data-testid') || '').toLowerCase();
+        const role = (node.getAttribute('role') || '').toLowerCase();
+        const ariaLabel = (node.getAttribute('aria-label') || '').toLowerCase();
+        const elementId = (node.getAttribute('id') || '').toLowerCase();
+
+        const markerText = `${className} ${testId} ${role} ${ariaLabel} ${elementId}`;
+        let score = Math.min(textLength / 4, 90);
+        if (/\b(response|answer|assistant|chat|markdown|content|bubble|message|turn|prose|prompt)\b/i.test(markerText)) score += 25;
+        if (/\b(role|assistant|status|group|article|region|listitem|list)\b/i.test(role)) score += 18;
+        if (/\b(assistant|response)\b/i.test(ariaLabel)) score += 14;
+        if (node.querySelector('pre, code, blockquote, table, ul, ol, li')) score += 24;
+
+        if (node.getBoundingClientRect) {
+            const rect = node.getBoundingClientRect();
+            if (rect.width > 640) score += 10;
+            if (rect.height > 40 && rect.height < 3200) score += 8;
+        }
+
+        return score;
+    }
+
+    function hasNotebookLmMessageHint(node) {
+        if (!node) return false;
+        const className = (node.className || '').toString().toLowerCase();
+        const testId = (node.getAttribute('data-testid') || '').toLowerCase();
+        const role = (node.getAttribute('role') || '').toLowerCase();
+        const ariaLabel = (node.getAttribute('aria-label') || '').toLowerCase();
+        const elementId = (node.getAttribute('id') || '').toLowerCase();
+
+        return /response|answer|message|turn|assistant|chat|markdown|content|bubble|prose|prompt/i.test(
+            `${className} ${testId} ${role} ${ariaLabel} ${elementId}`
+        );
+    }
+
+    function isNotebookLmMessageCandidate(node, score, fallback = false) {
+        if (!node || !node.textContent) return false;
+        const className = (node.className || '').toString().toLowerCase();
+        const testId = (node.getAttribute('data-testid') || '').toLowerCase();
+        const ariaLabel = (node.getAttribute('aria-label') || '').toLowerCase();
+        const role = (node.getAttribute('role') || '').toLowerCase();
+        const elementId = (node.getAttribute('id') || '').toLowerCase();
+        const tag = node.tagName.toLowerCase();
+        const noiseTags = new Set(['button', 'input', 'textarea', 'select', 'option', 'nav', 'header', 'footer', 'aside']);
+        if (noiseTags.has(tag)) return false;
+        if (node.closest('form') || node.closest('header') || node.closest('nav') || node.closest('aside')) return false;
+        if (node.querySelector('.kb-btn-wrapper')) return false;
+        if (!node.getBoundingClientRect) return false;
+        const rect = node.getBoundingClientRect();
+        if (rect.height < 16 || rect.width < 260) return false;
+
+        const hasMessageHints =
+            /\b(response|answer|message|turn|assistant|chat|markdown|content)\b/i.test(className + ' ' + testId + ' ' + elementId) ||
+            /\b(assistant|response|turn)\b/i.test(ariaLabel) ||
+            /\b(listitem|article|region|status)\b/i.test(role);
+        const hasText = getNodeTextLength(node) > (fallback ? 110 : 45);
+        if (!hasMessageHints && !node.closest('main')) return false;
+        if (!hasText) return false;
+
+        if (fallback) return score >= 60;
+        return score >= 34;
+    }
+
+    function getNodeTextLength(node) {
+        return ((node.innerText || '').trim().replace(/\s+/g, ' ').length);
+    }
+
+    function shouldRunInFrame() {
+        if (window.self === window.top) return true;
+        return Boolean(document.querySelector(
+            '[data-testid*="response"], [data-message-author-role], [data-message-id], [data-testid*="message"], [role="article"], [role="listitem"], [role="region"], .chat-message, .chat-turn, .assistant, .response'
+        ));
     }
 
     function isEligibleBlock(block) {
@@ -169,19 +339,188 @@
     }
 
     function injectButtons() {
+        if (isNotebookLmHost) {
+            injectNotebookLmButtons();
+            return;
+        }
+
         const blocks = getMessageBlocks();
         blocks.forEach(block => {
             if (!isEligibleBlock(block)) return;
-            const wrapper = document.createElement('div');
-            wrapper.className = 'kb-btn-wrapper';
-            wrapper.style = 'display: flex; gap: 8px; margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee;';
-            const nBtn = createBtn('Send to Notion', '#000');
-            const oBtn = createBtn('Send to Obsidian', '#483699');
-            nBtn.onclick = () => handleTransfer(block, 'Notion');
-            oBtn.onclick = () => handleTransfer(block, 'Obsidian');
-            wrapper.append(nBtn, oBtn);
+            if (block.querySelector('.kb-btn-wrapper')) return;
+            const wrapper = createTransferButtons(block, false);
             block.append(wrapper);
         });
+    }
+
+    function injectNotebookLmButtons() {
+        document.querySelectorAll('.kb-btn-wrapper').forEach((wrapper) => wrapper.remove());
+
+        const blocks = getNotebookLmMessageBlocks()
+            .filter((node) => isEligibleBlock(node))
+            .filter((node) => isVisibleElement(node));
+        if (blocks.length === 0) return;
+
+        blocks.sort((a, b) => {
+            if (a === b) return 0;
+            const position = a.compareDocumentPosition(b);
+            if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+            if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+            return 0;
+        });
+
+        const actionRows = getNotebookLmActionRows();
+        if (actionRows.length === 0) {
+            blocks.forEach((block) => {
+                const wrapper = createTransferButtons(block, true);
+                block.append(wrapper);
+            });
+            return;
+        }
+
+        actionRows.forEach((row) => {
+            const block = findClosestBlockAboveRow(row, blocks);
+            if (!block || !row.parentElement) return;
+            const wrapper = createTransferButtons(block, true);
+            row.parentElement.insertBefore(wrapper, row);
+        });
+    }
+
+    function findNotebookLmActionRow(block) {
+        if (!block) return null;
+
+        const roots = [];
+        roots.push(block);
+        roots.push(block.nextElementSibling);
+        roots.push(block.parentElement);
+        roots.push(block.parentElement ? block.parentElement.nextElementSibling : null);
+        roots.push(block.parentElement && block.parentElement.parentElement ? block.parentElement.parentElement : null);
+        roots.push(block.parentElement && block.parentElement.parentElement ? block.parentElement.parentElement.nextElementSibling : null);
+
+        for (const root of roots) {
+            if (!root) continue;
+            const copyButton = findCopyButton(root);
+            if (!copyButton) continue;
+            const row = getActionRowFromCopyButton(copyButton);
+            if (row) return row;
+        }
+
+        return null;
+    }
+
+    function getNotebookLmActionRows() {
+        const root = document.querySelector('main') || document.body;
+        const rows = [];
+        const seen = new Set();
+        const buttons = root.querySelectorAll('button, [role="button"]');
+
+        for (const button of buttons) {
+            if (!isVisibleElement(button)) continue;
+            if (!isCopyButton(button)) continue;
+
+            const row = getActionRowFromCopyButton(button);
+            if (!row || seen.has(row)) continue;
+            seen.add(row);
+            rows.push(row);
+        }
+
+        rows.sort((a, b) => {
+            if (a === b) return 0;
+            const position = a.compareDocumentPosition(b);
+            if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+            if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+            return 0;
+        });
+
+        return rows;
+    }
+
+    function findClosestBlockAboveRow(row, blocks) {
+        const rowRect = row.getBoundingClientRect();
+        let best = null;
+        let bestDistance = Number.POSITIVE_INFINITY;
+
+        blocks.forEach((block) => {
+            const blockRect = block.getBoundingClientRect();
+            if (blockRect.top > rowRect.top + 20) return;
+            const distance = Math.max(0, rowRect.top - blockRect.bottom);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = block;
+            }
+        });
+
+        if (best) return best;
+        return blocks[blocks.length - 1] || null;
+    }
+
+    function findCopyButton(root) {
+        const selectors = [
+            'button[aria-label*="copy" i]',
+            'button[aria-label*="복사"]',
+            'button[title*="copy" i]',
+            'button[title*="복사"]',
+            'button[data-testid*="copy" i]',
+            '[data-testid*="copy" i] button',
+            'button[mattooltip*="copy" i]',
+            'button[mattooltip*="복사"]'
+        ];
+
+        for (const selector of selectors) {
+            const button = root.querySelector(selector);
+            if (button && isVisibleElement(button)) return button;
+        }
+
+        const buttons = root.querySelectorAll('button, [role="button"]');
+        for (const button of buttons) {
+            if (!isVisibleElement(button)) continue;
+            if (isCopyButton(button)) return button;
+        }
+
+        return null;
+    }
+
+    function isCopyButton(button) {
+        if (!button) return false;
+        const text = `${button.innerText || ''} ${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''} ${button.getAttribute('data-testid') || ''}`.toLowerCase();
+        return text.includes('copy') || text.includes('복사');
+    }
+
+    function getActionRowFromCopyButton(copyButton) {
+        if (!copyButton) return null;
+        const selector = '[role="toolbar"], div[class*="action"], div[class*="footer"], div[class*="tool"], div[class*="button"], div[class*="control"], div[class*="menu"]';
+        const row = copyButton.closest(selector);
+        if (row && row.querySelectorAll('button, [role="button"]').length >= 2) return row;
+
+        const parent = copyButton.parentElement;
+        if (parent && parent.querySelectorAll('button, [role="button"]').length >= 2) return parent;
+        return null;
+    }
+
+    function isVisibleElement(node) {
+        if (!node || !node.getBoundingClientRect) return false;
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+    }
+
+    function createTransferButtons(block, notebookLmMode) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'kb-btn-wrapper';
+        wrapper.style = getButtonWrapperStyle(notebookLmMode);
+        const nBtn = createBtn('Send to Notion', '#000');
+        const oBtn = createBtn('Send to Obsidian', '#483699');
+        nBtn.onclick = () => handleTransfer(block, 'Notion');
+        oBtn.onclick = () => handleTransfer(block, 'Obsidian');
+        wrapper.append(nBtn, oBtn);
+        return wrapper;
+    }
+
+    function getButtonWrapperStyle(notebookLmMode = false) {
+        if (notebookLmMode) {
+            return 'display: flex; gap: 8px; justify-content: flex-end; width: 100%; margin: 2px 0 8px;';
+        }
+        const baseStyle = 'display: flex; gap: 8px; margin-top: 15px; padding-top: 10px; border-top: 1px solid #eee;';
+        return `${baseStyle} justify-content: flex-end; width: 100%; margin-left: auto; align-self: flex-end;`;
     }
 
     function createBtn(txt, bg) {
